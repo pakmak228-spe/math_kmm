@@ -251,7 +251,8 @@ def main():
     application.run_polling()
 
 if __name__ == '__main__':
-    main()import os
+    main()
+import os
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
