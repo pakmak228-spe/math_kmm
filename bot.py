@@ -169,7 +169,7 @@ class ScheduleBot:
         
         return message
     
-    def create_reminder_keyboard(self, schedule_data):
+    def create_reminder_keyboard(self, schedule_data, week_offset=0):
         """Создает клавиатуру для выбора пары для напоминания"""
         if not schedule_data["schedule"]:
             return None
@@ -177,10 +177,19 @@ class ScheduleBot:
         keyboard = []
         for i, lesson in enumerate(schedule_data["schedule"], 1):
             button_text = f"{i}. {lesson['time']} - {lesson['subject']}"
-            callback_data = f"remind_{i-1}_{schedule_data['day']}_{schedule_data['week_type']}"
+            callback_data = f"remind_{i-1}_{schedule_data['day']}_{schedule_data['week_type']}_{week_offset}"
             keyboard.append([InlineKeyboardButton(text=button_text, callback_data=callback_data)])
         
         return InlineKeyboardMarkup(inline_keyboard=keyboard)
+    
+    def get_week_schedule(self, start_date):
+        """Получить расписание на неделю с указанной даты"""
+        week_schedule = []
+        for i in range(7):  # Пн-Вс
+            day_date = start_date + timedelta(days=i)
+            schedule_data = self.get_schedule_for_day(day_date)
+            week_schedule.append(schedule_data)
+        return week_schedule
 
 # Инициализация бота и диспетчера
 schedule_bot = ScheduleBot()
@@ -197,14 +206,16 @@ async def start_handler(message: Message):
 /start - показать это сообщение
 /day - расписание на сегодня
 /tomorrow - расписание на завтра  
-/week - расписание на неделю
+/week - расписание на текущую неделю (Пн-Вс)
+/next_week - расписание на следующую неделю
 /week_type - какая сейчас неделя
 /remind - напомнить о паре (за 5 минут до начала)
 
-🏫 4 курс КММ (Прикладная математика)
+🏫 *4 курс КММ (Прикладная математика)*
+👨‍🎓 *Студенты: [Ваши фамилии]*
 📋 Учитываю числитель/знаменатель
     """
-    await message.answer(welcome_text)
+    await message.answer(welcome_text, parse_mode=ParseMode.MARKDOWN)
 
 @dp.message(Command("day"))
 async def today_schedule(message: Message):
@@ -232,22 +243,26 @@ async def tomorrow_schedule(message: Message):
 
 @dp.message(Command("week"))
 async def week_schedule(message: Message):
-    """Обработчик команды /week - расписание на неделю"""
+    """Обработчик команды /week - расписание на текущую неделю (Пн-Вс)"""
     try:
         today = datetime.now()
-        message_text = "📅 *Расписание на неделю*\n🏫 *4 курс КММ*\n\n"
+        # Находим понедельник текущей недели
+        monday = today - timedelta(days=today.weekday())
         
-        for i in range(6):  # Пн-Сб
-            day_date = today + timedelta(days=i)
-            schedule_data = schedule_bot.get_schedule_for_day(day_date)
+        week_schedule = schedule_bot.get_week_schedule(monday)
+        
+        message_text = "📅 *Расписание на текущую неделю*\n"
+        message_text += "🏫 *4 курс КММ*\n"
+        message_text += "👨‍🎓 *Студенты: [Ваши фамилии]*\n\n"
+        
+        for day_schedule in week_schedule:
+            message_text += f"*{day_schedule['day']}, {day_schedule['date']}*\n"
+            message_text += f"📋 *Неделя: {day_schedule['week_type']}*\n"
             
-            message_text += f"*{schedule_data['day']}, {schedule_data['date']}*\n"
-            message_text += f"📋 *Неделя: {schedule_data['week_type']}*\n"
-            
-            if not schedule_data["schedule"]:
+            if not day_schedule["schedule"]:
                 message_text += "❌ Занятий нет\n\n"
             else:
-                for lesson in schedule_data["schedule"]:
+                for lesson in day_schedule["schedule"]:
                     message_text += f"⏰ {lesson['time']} - {lesson['subject']}"
                     if lesson['room']:
                         message_text += f" ({lesson['room']})"
@@ -258,6 +273,39 @@ async def week_schedule(message: Message):
     except Exception as e:
         logger.error(f"Error in week_schedule: {e}")
         await message.answer("❌ Произошла ошибка при получении расписания на неделю")
+
+@dp.message(Command("next_week"))
+async def next_week_schedule(message: Message):
+    """Обработчик команды /next_week - расписание на следующую неделю"""
+    try:
+        today = datetime.now()
+        # Находим понедельник следующей недели
+        next_monday = today + timedelta(days=(7 - today.weekday()))
+        
+        week_schedule = schedule_bot.get_week_schedule(next_monday)
+        
+        message_text = "📅 *Расписание на следующую неделю*\n"
+        message_text += "🏫 *4 курс КММ*\n"
+        message_text += "👨‍🎓 *Студенты: [Ваши фамилии]*\n\n"
+        
+        for day_schedule in week_schedule:
+            message_text += f"*{day_schedule['day']}, {day_schedule['date']}*\n"
+            message_text += f"📋 *Неделя: {day_schedule['week_type']}*\n"
+            
+            if not day_schedule["schedule"]:
+                message_text += "❌ Занятий нет\n\n"
+            else:
+                for lesson in day_schedule["schedule"]:
+                    message_text += f"⏰ {lesson['time']} - {lesson['subject']}"
+                    if lesson['room']:
+                        message_text += f" ({lesson['room']})"
+                    message_text += "\n"
+                message_text += "\n"
+        
+        await message.answer(message_text, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        logger.error(f"Error in next_week_schedule: {e}")
+        await message.answer("❌ Произошла ошибка при получении расписания на следующую неделю")
 
 @dp.message(Command("week_type"))
 async def week_type_handler(message: Message):
@@ -279,34 +327,105 @@ async def week_type_handler(message: Message):
 async def remind_handler(message: Message):
     """Обработчик команды /remind - настройка напоминаний"""
     try:
-        today = datetime.now()
-        schedule_data = schedule_bot.get_schedule_for_day(today)
+        # Создаем клавиатуру для выбора недели
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📅 Текущая неделя", callback_data="remind_week_0"),
+                InlineKeyboardButton(text="📅 Следующая неделя", callback_data="remind_week_1")
+            ]
+        ])
         
-        if not schedule_data["schedule"]:
-            await message.answer("❌ На сегодня занятий нет")
-            return
-        
-        keyboard = schedule_bot.create_reminder_keyboard(schedule_data)
-        if keyboard:
-            await message.answer(
-                "🔔 Выберите пару для напоминания (уведомление придет за 5 минут до начала):",
-                reply_markup=keyboard
-            )
-        else:
-            await message.answer("❌ Не удалось создать список пар для напоминаний")
+        await message.answer(
+            "🔔 Выберите неделю для установки напоминаний:",
+            reply_markup=keyboard
+        )
             
     except Exception as e:
         logger.error(f"Error in remind_handler: {e}")
         await message.answer("❌ Произошла ошибка при настройке напоминаний")
 
+@dp.callback_query(F.data.startswith("remind_week_"))
+async def process_week_selection(callback: CallbackQuery):
+    """Обработчик выбора недели для напоминаний"""
+    try:
+        week_offset = int(callback.data.split("_")[2])  # 0 - текущая, 1 - следующая
+        
+        today = datetime.now()
+        start_date = today + timedelta(weeks=week_offset)
+        
+        # Получаем расписание на выбранную неделю
+        week_schedule = schedule_bot.get_week_schedule(start_date - timedelta(days=start_date.weekday()))
+        
+        # Создаем клавиатуру с днями недели
+        keyboard_buttons = []
+        for day_schedule in week_schedule:
+            if day_schedule["schedule"]:  # Только дни с занятиями
+                day_name = day_schedule["day"]
+                date_str = day_schedule["date"]
+                button_text = f"{day_name} ({date_str})"
+                callback_data = f"remind_day_{day_name}_{week_offset}"
+                keyboard_buttons.append([InlineKeyboardButton(text=button_text, callback_data=callback_data)])
+        
+        if not keyboard_buttons:
+            await callback.answer("❌ На выбранной неделе нет занятий")
+            return
+        
+        week_name = "текущей" if week_offset == 0 else "следующей"
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        
+        await callback.message.edit_text(
+            f"🔔 Выберите день на {week_name} неделе:",
+            reply_markup=keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in process_week_selection: {e}")
+        await callback.answer("❌ Ошибка при выборе недели")
+
+@dp.callback_query(F.data.startswith("remind_day_"))
+async def process_day_selection(callback: CallbackQuery):
+    """Обработчик выбора дня для напоминаний"""
+    try:
+        data_parts = callback.data.split("_")
+        day_name = data_parts[2]
+        week_offset = int(data_parts[3])
+        
+        today = datetime.now()
+        # Находим дату выбранного дня
+        days_mapping = {"Понедельник": 0, "Вторник": 1, "Среда": 2, "Четверг": 3, "Пятница": 4, "Суббота": 5, "Воскресенье": 6}
+        target_day_index = days_mapping[day_name]
+        
+        # Находим понедельник выбранной недели
+        week_monday = today - timedelta(days=today.weekday()) + timedelta(weeks=week_offset)
+        target_date = week_monday + timedelta(days=target_day_index)
+        
+        schedule_data = schedule_bot.get_schedule_for_day(target_date)
+        keyboard = schedule_bot.create_reminder_keyboard(schedule_data, week_offset)
+        
+        if keyboard:
+            await callback.message.edit_text(
+                f"🔔 Выберите пару для напоминания на {day_name}, {target_date.strftime('%d.%m.%Y')}:\n(уведомление придет за 5 минут до начала)",
+                reply_markup=keyboard
+            )
+        else:
+            await callback.answer("❌ На выбранный день нет занятий")
+            
+    except Exception as e:
+        logger.error(f"Error in process_day_selection: {e}")
+        await callback.answer("❌ Ошибка при выборе дня")
+
 @dp.callback_query(F.data.startswith("remind_"))
 async def process_reminder_callback(callback: CallbackQuery):
     """Обработчик выбора пары для напоминания"""
     try:
+        if callback.data.startswith("remind_week_") or callback.data.startswith("remind_day_"):
+            return  # Эти случаи обрабатываются отдельно
+            
         data_parts = callback.data.split("_")
         lesson_index = int(data_parts[1])
         day_name = data_parts[2]
         week_type = data_parts[3]
+        week_offset = int(data_parts[4])
         
         # Получаем информацию о выбранной паре
         day_schedule = SCHEDULE.get(day_name, {}).get(week_type, [])
@@ -322,23 +441,25 @@ async def process_reminder_callback(callback: CallbackQuery):
         
         # Получаем дату занятия
         today = datetime.now()
-        target_date = today
         
-        # Если день не сегодня, находим дату этого дня на текущей неделе
-        days_mapping = {"Понедельник": 0, "Вторник": 1, "Среда": 2, "Четверг": 3, "Пятница": 4, "Суббота": 5}
-        target_day_index = days_mapping.get(day_name)
-        if target_day_index is not None:
-            current_day_index = today.weekday()
-            days_diff = target_day_index - current_day_index
-            if days_diff < 0:
-                days_diff += 7  # Переход на следующую неделю
-            target_date = today + timedelta(days=days_diff)
+        # Находим дату выбранного дня с учетом смещения недели
+        days_mapping = {"Понедельник": 0, "Вторник": 1, "Среда": 2, "Четверг": 3, "Пятница": 4, "Суббота": 5, "Воскресенье": 6}
+        target_day_index = days_mapping[day_name]
+        
+        # Находим понедельник выбранной недели
+        week_monday = today - timedelta(days=today.weekday()) + timedelta(weeks=week_offset)
+        target_date = week_monday + timedelta(days=target_day_index)
         
         # Создаем datetime для начала пары
         lesson_datetime = datetime.combine(target_date.date(), start_time)
         
         # Время напоминания (за 5 минут до начала)
         reminder_time = lesson_datetime - timedelta(minutes=5)
+        
+        # Проверяем, не прошла ли уже пара
+        if reminder_time < datetime.now():
+            await callback.answer("❌ Эта пара уже прошла")
+            return
         
         # Добавляем напоминание
         schedule_bot.add_reminder(callback.from_user.id, lesson, reminder_time)
@@ -349,7 +470,8 @@ async def process_reminder_callback(callback: CallbackQuery):
             f"📚 *{lesson['subject']}*\n"
             f"⏰ {lesson['time']}\n"
             f"👨‍🏫 {lesson.get('teacher', '')}\n"
-            f"🏛 {lesson.get('room', '')}\n\n"
+            f"🏛 {lesson.get('room', '')}\n"
+            f"📅 {target_date.strftime('%d.%m.%Y')}\n\n"
             f"Уведомление придет за 5 минут до начала пары",
             parse_mode=ParseMode.MARKDOWN
         )
